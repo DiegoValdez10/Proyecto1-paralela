@@ -1,30 +1,20 @@
+#include <GL/gl.h>
+#include <GL/glu.h>
+#include <GL/glut.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <math.h>
 #include <time.h>
 #include <string.h>
-#include <unistd.h>
-#include <omp.h>  // OpenMP
+#include <omp.h> // <-- OpenMP
 
-#define CANVAS_WIDTH 80
-#define CANVAS_HEIGHT 40
-#define FPS_TARGET 10
+#define WINDOW_WIDTH 800
+#define WINDOW_HEIGHT 600
+#define MIN_CANVAS_WIDTH 640
+#define MIN_CANVAS_HEIGHT 480
+#define FPS_TARGET 60
 #define PI 3.14159265359
-#define MAX_STARS 1000
-
-#define CLEAR_SCREEN "\033[2J"
-#define CURSOR_HOME "\033[H"
-#define HIDE_CURSOR "\033[?25l"
-#define SHOW_CURSOR "\033[?25h"
-
-#define COLOR_RED "\033[91m"
-#define COLOR_GREEN "\033[92m"
-#define COLOR_YELLOW "\033[93m"
-#define COLOR_BLUE "\033[94m"
-#define COLOR_MAGENTA "\033[95m"
-#define COLOR_CYAN "\033[96m"
-#define COLOR_WHITE "\033[97m"
-#define COLOR_RESET "\033[0m"
+#define MAX_STARS 2000
 
 typedef struct {
     float x, y;
@@ -33,134 +23,257 @@ typedef struct {
     float pulse_phase;
     float pulse_speed;
     float size;
-    int color_code;
-    char symbol;
+    float r, g, b;
+    int star_type;
+    float glow_intensity;
 } Star;
 
 Star* stars = NULL;
 int num_stars = 0;
-char canvas[CANVAS_HEIGHT][CANVAS_WIDTH + 1];
-char color_canvas[CANVAS_HEIGHT][CANVAS_WIDTH + 1];
+int window_id;
+clock_t last_time;
+int frame_count = 0;
+float fps = 0.0f;
+clock_t fps_timer;
+int fps_counter = 0;
 
-const char* colors[] = {
-    COLOR_RED, COLOR_GREEN, COLOR_YELLOW,
-    COLOR_BLUE, COLOR_MAGENTA, COLOR_CYAN, COLOR_WHITE
-};
-
-const char star_symbols[] = {'*', '+', 'x', 'o', '#', '@', '.'};
-
-void clear_canvas() {
-    #pragma omp parallel for collapse(2)
-    for (int y = 0; y < CANVAS_HEIGHT; y++) {
-        for (int x = 0; x < CANVAS_WIDTH; x++) {
-            canvas[y][x] = ' ';
-            color_canvas[y][x] = 0;
-        }
-        canvas[y][CANVAS_WIDTH] = '\0';
-        color_canvas[y][CANVAS_WIDTH] = '\0';
+void generate_star_color(Star* star) {
+    int color_type = rand() % 8;
+    switch(color_type) {
+        case 0: star->r = 0.2f + (rand() % 30) / 100.0f; star->g = 0.4f + (rand() % 40) / 100.0f; star->b = 0.9f + (rand() % 10) / 100.0f; break;
+        case 1: star->r = 0.9f + (rand() % 10) / 100.0f; star->g = 0.2f + (rand() % 30) / 100.0f; star->b = 0.7f + (rand() % 30) / 100.0f; break;
+        case 2: star->r = 0.9f + (rand() % 10) / 100.0f; star->g = 0.8f + (rand() % 20) / 100.0f; star->b = 0.1f + (rand() % 20) / 100.0f; break;
+        case 3: star->r = 0.1f + (rand() % 20) / 100.0f; star->g = 0.8f + (rand() % 20) / 100.0f; star->b = 0.3f + (rand() % 30) / 100.0f; break;
+        case 4: star->r = 0.9f + (rand() % 10) / 100.0f; star->g = 0.5f + (rand() % 30) / 100.0f; star->b = 0.1f + (rand() % 20) / 100.0f; break;
+        case 5: star->r = 0.7f + (rand() % 30) / 100.0f; star->g = 0.2f + (rand() % 20) / 100.0f; star->b = 0.9f + (rand() % 10) / 100.0f; break;
+        case 6: star->r = 0.1f + (rand() % 20) / 100.0f; star->g = 0.8f + (rand() % 20) / 100.0f; star->b = 0.9f + (rand() % 10) / 100.0f; break;
+        default: star->r = star->g = star->b = 0.9f + (rand() % 10) / 100.0f; break;
     }
 }
 
 void init_star(Star* star, int index) {
-    star->x = (float)(rand() % (CANVAS_WIDTH - 2) + 1);
-    star->y = (float)(rand() % (CANVAS_HEIGHT - 2) + 1);
-
+    star->x = (float)(rand() % WINDOW_WIDTH);
+    star->y = (float)(rand() % WINDOW_HEIGHT);
     float angle = (float)(rand() % 360) * PI / 180.0f;
-    float speed = (float)(rand() % 1 + 1) / 100000.0f;
+    float speed = (float)(rand() % 30 + 10) / 1000.0f;
     star->vx = cos(angle) * speed;
     star->vy = sin(angle) * speed;
-
-    star->brightness = (float)(rand() % 50 + 50) / 100.0f;
+    star->brightness = 0.6f + (float)(rand() % 40) / 100.0f;
     star->pulse_phase = (float)(rand() % 360) * PI / 180.0f;
-    star->pulse_speed = (float)(rand() % 15 + 5) / 50000.0f;
-
-    star->size = (float)(rand() % 3 + 1);
-    star->color_code = rand() % 7;
-    star->symbol = star_symbols[rand() % 7];
+    star->pulse_speed = (float)(rand() % 20 + 5) / 10000.0f;
+    star->size = 2.0f + (float)(rand() % 6);
+    star->star_type = rand() % 4;
+    star->glow_intensity = 0.5f + (float)(rand() % 50) / 100.0f;
+    generate_star_color(star);
 }
 
 void apply_physics(Star* star) {
     star->x += star->vx;
     star->y += star->vy;
-
-    if (star->x <= 1 || star->x >= CANVAS_WIDTH - 2) {
-        star->vx = -star->vx * 0.95f;
-        if (star->x <= 1) star->x = 1;
-        if (star->x >= CANVAS_WIDTH - 2) star->x = CANVAS_WIDTH - 2;
+    if (star->x <= star->size || star->x >= WINDOW_WIDTH - star->size) {
+        star->vx = -star->vx * 0.98f;
+        if (star->x <= star->size) star->x = star->size;
+        if (star->x >= WINDOW_WIDTH - star->size) star->x = WINDOW_WIDTH - star->size;
     }
-
-    if (star->y <= 1 || star->y >= CANVAS_HEIGHT - 2) {
-        star->vy = -star->vy * 0.95f;
-        if (star->y <= 1) star->y = 1;
-        if (star->y >= CANVAS_HEIGHT - 2) star->y = CANVAS_HEIGHT - 2;
+    if (star->y <= star->size || star->y >= WINDOW_HEIGHT - star->size) {
+        star->vy = -star->vy * 0.98f;
+        if (star->y <= star->size) star->y = star->size;
+        if (star->y >= WINDOW_HEIGHT - star->size) star->y = WINDOW_HEIGHT - star->size;
     }
-
     star->pulse_phase += star->pulse_speed;
     if (star->pulse_phase > 2 * PI) star->pulse_phase -= 2 * PI;
-
-    float center_x = CANVAS_WIDTH / 2.0f;
-    float center_y = CANVAS_HEIGHT / 2.0f;
+    float center_x = WINDOW_WIDTH / 2.0f;
+    float center_y = WINDOW_HEIGHT / 2.0f;
     float dist_x = center_x - star->x;
     float dist_y = center_y - star->y;
     float distance = sqrt(dist_x * dist_x + dist_y * dist_y);
-
     if (distance > 0) {
-        float force = 0.0000001f;
+        float force = 0.000005f;
         star->vx += (dist_x / distance) * force;
         star->vy += (dist_y / distance) * force;
     }
 }
 
-void draw_star_to_canvas(Star* star) {
-    float current_brightness = star->brightness * (0.6f + 0.4f * sin(star->pulse_phase));
-    int x = (int)round(star->x);
-    int y = (int)round(star->y);
-
-    if (x >= 0 && x < CANVAS_WIDTH && y >= 0 && y < CANVAS_HEIGHT) {
-        char symbol;
-        if (current_brightness > 0.8f) symbol = '*';
-        else if (current_brightness > 0.6f) symbol = '+';
-        else if (current_brightness > 0.4f) symbol = '.';
-        else symbol = ' ';
-
-        if (symbol != ' ') {
-            // Riesgo mínimo de condición de carrera (no crítico visualmente)
-            canvas[y][x] = symbol;
-            color_canvas[y][x] = star->color_code + 1;
-        }
+void draw_star_glow(float x, float y, float size, float r, float g, float b, float alpha) {
+    int segments = 16;
+    glBegin(GL_TRIANGLE_FAN);
+    glColor4f(r, g, b, alpha);
+    glVertex2f(x, y);
+    for (int i = 0; i <= segments; i++) {
+        float angle = 2.0f * PI * i / segments;
+        float px = x + cos(angle) * size;
+        float py = y + sin(angle) * size;
+        glColor4f(r, g, b, 0.0f);
+        glVertex2f(px, py);
     }
+    glEnd();
 }
 
-void render_canvas() {
-    printf(CLEAR_SCREEN CURSOR_HOME);
-    for (int y = 0; y < CANVAS_HEIGHT; y++) {
-        for (int x = 0; x < CANVAS_WIDTH; x++) {
-            int color_code = color_canvas[y][x];
-            if (color_code > 0) printf("%s%c", colors[color_code - 1], canvas[y][x]);
-            else printf(" ");
-        }
-        printf(COLOR_RESET "\n");
+void render_star(Star* star) {
+    float current_brightness = star->brightness * (0.7f + 0.3f * sin(star->pulse_phase));
+    float r = star->r * current_brightness;
+    float g = star->g * current_brightness;
+    float b = star->b * current_brightness;
+    float x = star->x;
+    float y = star->y;
+    float size = star->size;
+    glEnable(GL_BLEND);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE);
+    switch(star->star_type) {
+        case 0:
+            draw_star_glow(x, y, size * 3, r, g, b, 0.1f * star->glow_intensity);
+            draw_star_glow(x, y, size * 2, r, g, b, 0.2f * star->glow_intensity);
+            glColor3f(r, g, b);
+            glBegin(GL_LINES);
+            glVertex2f(x - size, y); glVertex2f(x + size, y);
+            glVertex2f(x, y - size); glVertex2f(x, y + size);
+            glEnd();
+            glPointSize(3.0f);
+            glBegin(GL_POINTS);
+            glColor3f(r * 1.2f, g * 1.2f, b * 1.2f);
+            glVertex2f(x, y);
+            glEnd();
+            break;
+        case 1:
+            draw_star_glow(x, y, size * 4, r, g, b, 0.15f * star->glow_intensity);
+            glColor3f(r, g, b);
+            glBegin(GL_LINES);
+            glVertex2f(x - size, y); glVertex2f(x + size, y);
+            glVertex2f(x, y - size); glVertex2f(x, y + size);
+            float diag = size * 0.7f;
+            glVertex2f(x - diag, y - diag); glVertex2f(x + diag, y + diag);
+            glVertex2f(x - diag, y + diag); glVertex2f(x + diag, y - diag);
+            glEnd();
+            glPointSize(4.0f);
+            glBegin(GL_POINTS);
+            glColor3f(1.0f, 1.0f, 1.0f);
+            glVertex2f(x, y);
+            glEnd();
+            break;
+        case 2:
+            draw_star_glow(x, y, size * 5, r, g, b, 0.08f * star->glow_intensity);
+            draw_star_glow(x, y, size * 3, r, g, b, 0.15f * star->glow_intensity);
+            draw_star_glow(x, y, size * 1.5f, r, g, b, 0.3f * star->glow_intensity);
+            glColor3f(r, g, b);
+            glBegin(GL_LINES);
+            for (int i = 0; i < 8; i++) {
+                float angle = (PI * 2 * i) / 8;
+                float ray_length = size * (1.2f + 0.3f * sin(star->pulse_phase + i));
+                glVertex2f(x, y);
+                glVertex2f(x + cos(angle) * ray_length, y + sin(angle) * ray_length);
+            }
+            glEnd();
+            glPointSize(5.0f);
+            glBegin(GL_POINTS);
+            glColor3f(1.0f, 1.0f, 1.0f);
+            glVertex2f(x, y);
+            glEnd();
+            break;
+        case 3:
+            float pulse_factor = 1.0f + 0.5f * sin(star->pulse_phase * 2);
+            draw_star_glow(x, y, size * 6 * pulse_factor, r, g, b, 0.05f * star->glow_intensity);
+            draw_star_glow(x, y, size * 3 * pulse_factor, r, g, b, 0.1f * star->glow_intensity);
+            glColor3f(r, g, b);
+            glBegin(GL_LINE_LOOP);
+            for (int i = 0; i < 10; i++) {
+                float angle = (PI * 2 * i) / 10;
+                float radius = (i % 2 == 0) ? size : size * 0.5f;
+                radius *= pulse_factor;
+                glVertex2f(x + cos(angle) * radius, y + sin(angle) * radius);
+            }
+            glEnd();
+            break;
     }
+    glDisable(GL_BLEND);
 }
 
-void display_fps_info(double frame_time, int frame_count) {
-    static double total_time = 0;
-    static int fps_counter = 0;
-
-    total_time += frame_time;
+void display_fps() {
     fps_counter++;
-
-    if (fps_counter >= 30) {
-        double avg_fps = fps_counter / total_time;
-        printf("FPS: %.1f | Frame time: %.2fms | Estrellas: %d\n",
-               avg_fps, (frame_time * 1000), num_stars);
+    clock_t current_time = clock();
+    if (current_time - fps_timer >= CLOCKS_PER_SEC) {
+        fps = (float)fps_counter / ((current_time - fps_timer) / (float)CLOCKS_PER_SEC);
         fps_counter = 0;
-        total_time = 0;
+        fps_timer = current_time;
+        char title[256];
+        snprintf(title, sizeof(title), "Screensaver OpenGL - Estrellas: %d | FPS: %.1f", num_stars, fps);
+        glutSetWindowTitle(title);
+        printf("FPS: %.1f\n", fps);
+        if (fps < 30) printf("⚠️  ADVERTENCIA: FPS por debajo de 30!\n");
     }
+}
+
+void display() {
+    glClearColor(0.02f, 0.01f, 0.05f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT);
+
+    // Primero física en paralelo
+    #pragma omp parallel for schedule(dynamic)
+    for (int i = 0; i < num_stars; i++) {
+        apply_physics(&stars[i]);
+    }
+
+    // Luego renderizado secuencial
+    for (int i = 0; i < num_stars; i++) {
+        render_star(&stars[i]);
+    }
+
+    display_fps();
+    glutSwapBuffers();
+}
+
+void reshape(int width, int height) {
+    glViewport(0, 0, width, height);
+    glMatrixMode(GL_PROJECTION);
+    glLoadIdentity();
+    gluOrtho2D(0, width, 0, height);
+    glMatrixMode(GL_MODELVIEW);
+    glLoadIdentity();
+}
+
+void keyboard(unsigned char key, int x, int y) {
+    switch(key) {
+        case 27: case 'q': case 'Q':
+            if (stars) free(stars);
+            glutDestroyWindow(window_id);
+            exit(0);
+        case '+':
+            if (num_stars < MAX_STARS - 50) {
+                stars = realloc(stars, (num_stars + 50) * sizeof(Star));
+                #pragma omp parallel for
+                for (int i = num_stars; i < num_stars + 50; i++)
+                    init_star(&stars[i], i);
+                num_stars += 50;
+            }
+            break;
+        case '-':
+            if (num_stars > 50) {
+                num_stars -= 50;
+                stars = realloc(stars, num_stars * sizeof(Star));
+            }
+            break;
+    }
+}
+
+void timer(int value) {
+    glutPostRedisplay();
+    glutTimerFunc(16, timer, 0);
+}
+
+void init_opengl() {
+    glEnable(GL_POINT_SMOOTH);
+    glEnable(GL_LINE_SMOOTH);
+    glHint(GL_POINT_SMOOTH_HINT, GL_NICEST);
+    glHint(GL_LINE_SMOOTH_HINT, GL_NICEST);
+    glEnable(GL_ALPHA_TEST);
+    glAlphaFunc(GL_GREATER, 0.0f);
+    glBlendFunc(GL_SRC_ALPHA, GL_ONE_MINUS_SRC_ALPHA);
 }
 
 int validate_input(int argc, char* argv[]) {
-    if (argc != 2) return -1;
+    if (argc != 2) {
+        printf("Uso: %s <numero_de_estrellas>\n", argv[0]);
+        return -1;
+    }
     int n = atoi(argv[1]);
     if (n <= 0 || n > MAX_STARS) return -1;
     return n;
@@ -168,49 +281,30 @@ int validate_input(int argc, char* argv[]) {
 
 int main(int argc, char* argv[]) {
     num_stars = validate_input(argc, argv);
-    if (num_stars == -1) {
-        printf("Uso: %s <numero_de_estrellas>\n", argv[0]);
-        return 1;
-    }
-
+    if (num_stars == -1) return 1;
+    glutInit(&argc, argv);
+    glutInitDisplayMode(GLUT_DOUBLE | GLUT_RGB | GLUT_ALPHA);
+    glutInitWindowSize(WINDOW_WIDTH, WINDOW_HEIGHT);
+    glutInitWindowPosition(100, 100);
+    char title[256];
+    snprintf(title, sizeof(title), "Screensaver OpenGL - Estrellas: %d", num_stars);
+    window_id = glutCreateWindow(title);
     srand((unsigned int)time(NULL));
     stars = (Star*)malloc(num_stars * sizeof(Star));
+    if (!stars) return 1;
+
+    // Inicialización de estrellas en paralelo
+    #pragma omp parallel for
     for (int i = 0; i < num_stars; i++) init_star(&stars[i], i);
 
-    printf(HIDE_CURSOR);
+    init_opengl();
+    glutDisplayFunc(display);
+    glutReshapeFunc(reshape);
+    glutKeyboardFunc(keyboard);
+    glutTimerFunc(0, timer, 0);
+    fps_timer = clock();
+    glutMainLoop();
 
-    clock_t frame_start, frame_end;
-    double frame_time;
-    double target_frame_time = 1.0 / FPS_TARGET;
-    int frame_count = 0;
-
-    while (1) {
-        frame_start = clock();
-        clear_canvas();
-
-        // PARALLEL: física + dibujo en paralelo
-        #pragma omp parallel for
-        for (int i = 0; i < num_stars; i++) {
-            apply_physics(&stars[i]);
-            draw_star_to_canvas(&stars[i]);
-        }
-
-        render_canvas();
-
-        frame_end = clock();
-        frame_time = ((double)(frame_end - frame_start)) / CLOCKS_PER_SEC;
-        frame_count++;
-        display_fps_info(frame_time, frame_count);
-
-        if (frame_time < target_frame_time) {
-            double sleep_time = target_frame_time - frame_time;
-            usleep((useconds_t)(sleep_time * 1000000));
-        } else {
-            usleep(50000);
-        }
-    }
-
-    printf(SHOW_CURSOR COLOR_RESET);
-    free(stars);
+    if (stars) free(stars);
     return 0;
 }
