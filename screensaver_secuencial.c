@@ -305,7 +305,7 @@ void display_fps() {
         // También en consola para debugging
         printf("FPS: %.1f\n", fps);
         if (fps < 30) {
-            printf("⚠️  ADVERTENCIA: FPS por debajo de 30!\n");
+            printf("  ADVERTENCIA: FPS por debajo de 30!\n");
         }
     }
 }
@@ -427,6 +427,9 @@ int validate_input(int argc, char* argv[]) {
 
 // Función principal
 int main(int argc, char* argv[]) {
+    // Marcar tiempo de inicio de inicialización
+    clock_t start_init_time = clock();
+    
     // Validar argumentos
     num_stars = validate_input(argc, argv);
     if (num_stars == -1) {
@@ -455,11 +458,17 @@ int main(int argc, char* argv[]) {
         return 1;
     }
     
+    // Marcar tiempo de inicio de inicialización de estrellas
+    clock_t start_stars_init = clock();
+    
     // Inicializar estrellas
     printf("Inicializando %d estrellas...\n", num_stars);
     for (int i = 0; i < num_stars; i++) {
         init_star(&stars[i], i);
     }
+    
+    // Calcular tiempo de inicialización de estrellas
+    clock_t end_stars_init = clock();
     
     // Configurar OpenGL
     init_opengl();
@@ -472,7 +481,17 @@ int main(int argc, char* argv[]) {
     
     fps_timer = clock();
     
-    printf("Screensaver OpenGL iniciado!\n");
+    // Calcular tiempo total de inicialización
+    clock_t end_init_time = clock();
+    double total_init_time = ((double)(end_init_time - start_init_time)) / CLOCKS_PER_SEC;
+    double stars_init_time = ((double)(end_stars_init - start_stars_init)) / CLOCKS_PER_SEC;
+    double time_per_star = (stars_init_time * 1000000.0) / num_stars; // En microsegundos
+    
+    printf("════════════════════════════════════════════════════════════\n");
+    printf("Inicialización completada en %.3f segundos\n", total_init_time);
+    printf("Tiempo promedio por estrella: %.2f microsegundos\n", time_per_star);
+    printf("════════════════════════════════════════════════════════════\n");
+    ;
     printf("Resolución: %dx%d pixels\n", WINDOW_WIDTH, WINDOW_HEIGHT);
     printf("FPS objetivo: %d\n", FPS_TARGET);
     printf("Controles: ESC para salir, +/- para ajustar estrellas\n\n");
